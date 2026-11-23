@@ -104,9 +104,14 @@
     compositor-specific policy when a tool can be removed. Common approaches
     will likely include some form of removing a tool when all tablets the
     tool was used on are removed.
+
+    Pads are usually part of a tablet and are associated with it through
+    the zwp_tablet_pad_v2.enter event. Since version 3, a pad that is not
+    associated with any tablet (e.g. a stand-alone shortcut remote) is
+    announced as such with the zwp_tablet_pad_v2.standalone event.
   </description>
 
-  <interface name="zwp_tablet_manager_v2" version="2">
+  <interface name="zwp_tablet_manager_v2" version="3">
     <description summary="controller object for graphic tablet devices">
       An object that provides access to the graphics tablets available on this
       system. All tablets are associated with a seat, to get access to the
@@ -130,7 +135,7 @@
     </request>
   </interface>
 
-  <interface name="zwp_tablet_seat_v2" version="2">
+  <interface name="zwp_tablet_seat_v2" version="3">
     <description summary="controller object for graphic tablet devices of a seat">
       An object that provides access to the graphics tablets available on this
       seat. After binding to this interface, the compositor sends a set of
@@ -181,7 +186,7 @@
     </event>
   </interface>
 
-  <interface name="zwp_tablet_tool_v2" version="2">
+  <interface name="zwp_tablet_tool_v2" version="3">
     <description summary="a physical tablet tool">
       An object that represents a physical tool that has been, or is
       currently in use with a tablet in this seat. Each zwp_tablet_tool_v2
@@ -565,9 +570,53 @@
     <enum name="error">
       <entry name="role" value="0" summary="given wl_surface has another role"/>
     </enum>
+
+    <!-- Version 3 additions -->
+
+    <enum name="pressure_curve" since="3">
+      <description summary="pressure transformation applied by the compositor">
+	Describes whether the compositor transforms the pressure values it
+	sends for this tool beyond normalizing them to the
+	zwp_tablet_tool_v2.pressure range.
+      </description>
+      <entry name="linear" value="0" summary="pressure is a linear mapping of the hardware pressure range"/>
+      <entry name="custom" value="1" summary="the compositor applies a non-linear curve or a range remap"/>
+    </enum>
+
+    <event name="pressure_curve" since="3">
+      <description summary="pressure transformation state">
+	Notifies the client whether the zwp_tablet_tool_v2.pressure values
+	sent for this tool have been transformed by the compositor.
+
+	A value of linear means the pressure is a linear mapping of the
+	tool's hardware pressure range onto [0, 65535]. The compositor may
+	still compensate for hardware effects such as a pre-loaded or worn
+	tip (e.g. by subtracting a detected pressure offset) and report
+	linear.
+
+	A value of custom means the compositor applies a transformation
+	that is not linear in the above sense, typically a user-configured
+	pressure curve or a remapping of a sub-range of the hardware
+	pressure onto [0, 65535]. Clients that offer their own pressure
+	curves may use this to avoid applying a second curve on top of the
+	compositor's, or to inform the user that a system-wide curve is
+	active. The compositor does not expose the curve itself.
+
+	This event is sent in the initial burst of events before the
+	zwp_tablet_tool_v2.done event. It is sent again whenever the state
+	changes, e.g. because the user changed the configuration. A new
+	state applies to all zwp_tablet_tool_v2.pressure events sent after
+	it; if the tool is in proximity, the change takes effect at the
+	next zwp_tablet_tool_v2.frame boundary.
+
+	If this event is not sent, the client cannot make any assumption
+	about the pressure transformation.
+      </description>
+      <arg name="pressure_curve" type="uint" enum="pressure_curve" summary="the current pressure transformation state"/>
+    </event>
   </interface>
 
-  <interface name="zwp_tablet_v2" version="2">
+  <interface name="zwp_tablet_v2" version="3">
     <description summary="graphics tablet device">
       The zwp_tablet_v2 interface represents one graphics tablet device. The
       tablet interface itself does not generate events; all events are
@@ -681,9 +730,52 @@
       </description>
       <arg name="bustype" type="uint" enum="bustype" summary="bus type"/>
     </event>
+
+    <!-- Version 3 additions -->
+
+    <event name="output" since="3">
+      <description summary="output the tablet is mapped to">
+	Notifies the client of the output that this tablet's active area is
+	currently mapped to, i.e. the output on which positions reported by
+	tools on this tablet are located. On a pen display (a tablet with
+	an integrated screen) this is usually the integrated screen. Clients
+	may use this to place tool-related user interface, e.g. palettes or
+	radial menus, on that output.
+
+	The output argument is null if the tablet is not mapped to exactly
+	one output, e.g. because its active area is mapped to the whole
+	desktop or to a region spanning several outputs, or because the
+	tablet is used in a relative (mouse-like) mode. It is also null if
+	the client has not bound the wl_output global the tablet is mapped
+	to.
+
+	If the client binds the wl_output global the tablet is mapped to
+	after this event was sent, the compositor sends this event again
+	with the new wl_output resource. If the client has bound that
+	wl_output global more than once, the event is sent once for each
+	of the client's wl_output resources representing it; the client
+	should treat these resources as equivalent.
+
+	This event is sent in the initial burst of events before the
+	zwp_tablet_v2.done event if the tablet is mapped to an output at the
+	time it is announced. After zwp_tablet_v2.done it is sent whenever
+	the mapping changes, e.g. when the user toggles between mapping a
+	pen display to its own screen and to the whole desktop. The most
+	recently received event describes the current mapping; the mapping
+	applies to tool events sent after this event.
+
+	When the wl_output global the tablet is mapped to is removed, the
+	compositor sends this event again with either null or the output
+	the tablet is now mapped to. Clients must not rely on the order of
+	this event relative to the wl_registry.global_remove event.
+
+	If this event is never sent, the mapping is unknown to the client.
+      </description>
+      <arg name="output" type="object" interface="wl_output" allow-null="true" summary="the output the tablet is mapped to"/>
+    </event>
   </interface>
 
-  <interface name="zwp_tablet_pad_ring_v2" version="2">
+  <interface name="zwp_tablet_pad_ring_v2" version="3">
     <description summary="pad ring">
       A circular interaction area, such as the touch ring on the Wacom Intuos
       Pro series tablets.
@@ -708,6 +800,19 @@
 	The provided string 'description' is a UTF-8 encoded string to be
 	associated with this ring, and is considered user-visible; general
 	internationalization rules apply.
+
+	Compositors may present the description on screen (e.g. in an
+	on-screen display or overlay) and on displays that are
+	part of the tablet hardware, e.g. per-button or per-dial OLED
+	labels on a shortcut remote. How, where and whether the description
+	is presented is compositor policy; clients must not rely on it being
+	shown, and should keep descriptions short enough to be legible on
+	small hardware displays. A description remains associated
+	with the ring until it is replaced by a subsequent set_feedback
+	request for the same ring and mode switch serial, until the next
+	zwp_tablet_pad_group_v2.mode_switch event for its group, or until the
+	pad leaves the client's surface (zwp_tablet_pad_v2.leave), whichever
+	comes first.
 
 	The serial argument will be that of the last
 	zwp_tablet_pad_group_v2.mode_switch event received for the group of this
@@ -797,7 +902,7 @@
     </event>
   </interface>
 
-  <interface name="zwp_tablet_pad_strip_v2" version="2">
+  <interface name="zwp_tablet_pad_strip_v2" version="3">
     <description summary="pad strip">
       A linear interaction area, such as the strips found in Wacom Cintiq
       models.
@@ -822,6 +927,19 @@
 	The provided string 'description' is a UTF-8 encoded string to be
 	associated with this ring, and is considered user-visible; general
 	internationalization rules apply.
+
+	Compositors may present the description on screen (e.g. in an
+	on-screen display or overlay) and on displays that are
+	part of the tablet hardware, e.g. per-button or per-dial OLED
+	labels on a shortcut remote. How, where and whether the description
+	is presented is compositor policy; clients must not rely on it being
+	shown, and should keep descriptions short enough to be legible on
+	small hardware displays. A description remains associated
+	with the strip until it is replaced by a subsequent set_feedback
+	request for the same strip and mode switch serial, until the next
+	zwp_tablet_pad_group_v2.mode_switch event for its group, or until the
+	pad leaves the client's surface (zwp_tablet_pad_v2.leave), whichever
+	comes first.
 
 	The serial argument will be that of the last
 	zwp_tablet_pad_group_v2.mode_switch event received for the group of this
@@ -913,7 +1031,7 @@
     </event>
   </interface>
 
-  <interface name="zwp_tablet_pad_group_v2" version="2">
+  <interface name="zwp_tablet_pad_group_v2" version="3">
     <description summary="a set of buttons, rings and strips">
       A pad group describes a distinct (sub)set of buttons, rings and strips
       present in the tablet. The criteria of this grouping is usually positional,
@@ -1061,7 +1179,7 @@
     </event>
   </interface>
 
-  <interface name="zwp_tablet_pad_v2" version="2">
+  <interface name="zwp_tablet_pad_v2" version="3">
     <description summary="a set of buttons, rings, strips and dials">
       A pad device is a set of buttons, rings, strips and dials
       usually physically present on the tablet device itself. Some
@@ -1108,6 +1226,19 @@
 	The provided string 'description' is a UTF-8 encoded string to be
 	associated with this ring, and is considered user-visible; general
 	internationalization rules apply.
+
+	Compositors may present the description on screen (e.g. in an
+	on-screen display or overlay) and on displays that are
+	part of the tablet hardware, e.g. per-button or per-dial OLED
+	labels on a shortcut remote. How, where and whether the description
+	is presented is compositor policy; clients must not rely on it being
+	shown, and should keep descriptions short enough to be legible on
+	small hardware displays. A description remains associated
+	with the button until it is replaced by a subsequent set_feedback
+	request for the same button and mode switch serial, until the next
+	zwp_tablet_pad_group_v2.mode_switch event for its group, or until the
+	pad leaves the client's surface (zwp_tablet_pad_v2.leave), whichever
+	comes first.
 
 	The serial argument will be that of the last
 	zwp_tablet_pad_group_v2.mode_switch event received for the group of this
@@ -1194,9 +1325,18 @@
     <event name="enter">
       <description summary="enter event">
 	Notification that this pad is focused on the specified surface.
+
+	The tablet argument is the tablet the pad is physically attached
+	to or logically paired with. Since version 3, the tablet argument
+	is null if and only if the pad was announced as standalone, see
+	zwp_tablet_pad_v2.standalone. The compositor must not send a null
+	tablet to clients that bound zwp_tablet_manager_v2 at a version
+	lower than 3; for such clients, a standalone pad is announced with
+	a tablet chosen by the compositor or not announced at all, as in
+	previous versions of this protocol.
       </description>
       <arg name="serial" type="uint" summary="serial number of the enter event"/>
-      <arg name="tablet" type="object" interface="zwp_tablet_v2" summary="the tablet the pad is attached to"/>
+      <arg name="tablet" type="object" interface="zwp_tablet_v2" allow-null="true" summary="the tablet the pad is attached to"/>
       <arg name="surface" type="object" interface="wl_surface" summary="surface the pad is focused on"/>
     </event>
 
@@ -1219,9 +1359,35 @@
 	the pad itself.
       </description>
     </event>
+
+    <!-- Version 3 additions -->
+
+    <event name="standalone" since="3">
+      <description summary="pad is not attached to a tablet">
+	Notifies the client that this pad is not associated with any
+	zwp_tablet_v2, e.g. because it is a stand-alone shortcut remote or
+	dial controller without a digitizer of its own, connected through
+	its own receiver or cable.
+
+	For a standalone pad the tablet argument of the
+	zwp_tablet_pad_v2.enter event is null. Clients should make the pad's
+	features available as soon as zwp_tablet_pad_v2.done is received and
+	must not wait for a zwp_tablet_seat_v2.tablet_added event before
+	binding actions to the pad.
+
+	A pad that is physically detached from a tablet but paired with
+	one, e.g. a remote that only works together with a specific
+	tablet, is not standalone if the compositor associates it with
+	that tablet.
+
+	This event is sent at most once, in the initial burst of events
+	before the zwp_tablet_pad_v2.done event. A pad's standalone status
+	does not change during the lifetime of the zwp_tablet_pad_v2 object.
+      </description>
+    </event>
   </interface>
 
-  <interface name="zwp_tablet_pad_dial_v2" version="2">
+  <interface name="zwp_tablet_pad_dial_v2" version="3">
     <description summary="pad dial">
       A rotary control, e.g. a dial or a wheel.
 
@@ -1245,6 +1411,19 @@
 	The provided string 'description' is a UTF-8 encoded string to be
 	associated with this ring, and is considered user-visible; general
 	internationalization rules apply.
+
+	Compositors may present the description on screen (e.g. in an
+	on-screen display or overlay) and on displays that are
+	part of the tablet hardware, e.g. per-button or per-dial OLED
+	labels on a shortcut remote. How, where and whether the description
+	is presented is compositor policy; clients must not rely on it being
+	shown, and should keep descriptions short enough to be legible on
+	small hardware displays. A description remains associated
+	with the dial until it is replaced by a subsequent set_feedback
+	request for the same dial and mode switch serial, until the next
+	zwp_tablet_pad_group_v2.mode_switch event for its group, or until the
+	pad leaves the client's surface (zwp_tablet_pad_v2.leave), whichever
+	comes first.
 
 	The serial argument will be that of the last
 	zwp_tablet_pad_group_v2.mode_switch event received for the group of this
